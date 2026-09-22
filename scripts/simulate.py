@@ -105,7 +105,7 @@ def main():
 								for instance_id, targets in instance_ids.items():
 									for target, c in targets.items():
 										if instance_id in instances[function_name]:
-											if target not in no_process[function_name][instance_id] and float(instances[function_name][instance_id]["process"][target]["time"]) + float(instances[function_name][instance_id]["process"][target]["latency"]) < stats["time"]: # request done, returning to idle
+											if (instance_id not in no_process[function_name] or target not in no_process[function_name][instance_id]) and float(instances[function_name][instance_id]["process"][target]["time"]) + float(instances[function_name][instance_id]["process"][target]["latency"]) < stats["time"]: # request done, returning to idle
 												mem_process = float(instances[function_name][instance_id]["process"][target]["mem"])
 												stats["used_total"] -= mem_process
 												stats["used_" + function_name] -= mem_process
@@ -326,7 +326,7 @@ def main():
 							for instance_id, targets in instance_ids.items():
 								for target, c in targets.items():
 									if instance_id in instances[function_name]:
-										if target not in no_process[function_name][instance_id] and float(instances[function_name][instance_id]["process"][target]["time"]) + float(instances[function_name][instance_id]["process"][target]["latency"]) < stats["time"]: # request done, returning to idle
+										if (instance_id not in no_process[function_name] or target not in no_process[function_name][instance_id]) and float(instances[function_name][instance_id]["process"][target]["time"]) + float(instances[function_name][instance_id]["process"][target]["latency"]) < stats["time"]: # request done, returning to idle
 											mem_process = float(instances[function_name][instance_id]["process"][target]["mem"])
 											stats["used_total"] -= mem_process
 											stats["used_" + function_name] -= mem_process
