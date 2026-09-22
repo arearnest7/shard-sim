@@ -31,7 +31,7 @@ mu_sigma = {
 	"pileup": {"mu": 95.0, "sigma": 12.0}
 }
 
-total_time = 200000 #2000000 # ms
+total_time = 2000000 # ms
 
 instances = {}
 # workflow_id: {allocated_total: mem, shards: {shard_id: {in_process: request, allocated: mem, last_invoked: time, owner: function_name}}}
@@ -115,9 +115,7 @@ def main():
 												if args.assignment == "exact":
 													k_events["container"]["modify"][instances[function_name][instance_id]["owner"][target]] += 1
 												if instances[function_name][instance_id]["owner"][target] in allocated:
-													if args.assignment == "standard":
-														allocated[instances[function_name][instance_id]["owner"][target]] -= container_alloc[function_name] / args.target
-													elif args.assignment == "exact":
+													if args.assignment == "exact":
 														allocated[instances[function_name][instance_id]["owner"][target]] -= mem_process
 														instances[function_name][instance_id]["allocated"] -= mem_process
 														stats["alloc_total"] -= mem_process
@@ -130,6 +128,9 @@ def main():
 													no_process[function_name][instance_id] = {}
 												no_process[function_name][instance_id][target] = 1
 											if instances[function_name][instance_id]["last_invoked"] + args.ttl < stats["time"] and instance_id in no_process[function_name] and len(no_process[function_name][instance_id]) == args.target: # ttl reclaim
+												if args.assignment == "standard":
+													for t, owner in instances[function_name][instance_id]["owner"].items():
+														allocated[owner] -= container_alloc[function_name] / args.target
 												k_events["container"]["delete"][instances[function_name][instance_id]["owner"][target]] += 1
 												mem_allocated = instances[function_name][instance_id]["allocated"]
 												stats["idle_total"] -= mem_allocated
@@ -208,15 +209,19 @@ def main():
 				else:
 					if wf_id not in allocated:
 						allocated[wf_id] = 0
+					if wf_id not in memory_cost:
 						memory_cost[wf_id] = 0
 					if len(no_process[function_name]) > 0: # find pre-existing idle instance for incoming request
 						instance_id = next(iter(no_process[function_name]))
 						target = next(iter(no_process[function_name][instance_id]))
+						prev_owner = instances[function_name][instance_id]["owner"][target]
 						instances[function_name][instance_id]["process"][target] = incoming_request
 						instances[function_name][instance_id]["last_invoked"] = float(incoming_request["time"])
 						instances[function_name][instance_id]["owner"][target] = wf_id
 						if args.assignment == "standard":
-							allocated[instances[function_name][instance_id]["owner"][target]] += container_alloc[function_name] / args.target
+							if prev_owner != wf_id:
+								allocated[prev_owner] -= container_alloc[function_name] / args.target
+								allocated[instances[function_name][instance_id]["owner"][target]] += container_alloc[function_name] / args.target
 							stats["idle_total"] -= float(incoming_request["mem"])
 							stats["idle_" + function_name] -= float(incoming_request["mem"])
 						elif args.assignment == "exact":
@@ -260,9 +265,10 @@ def main():
 							no_process[function_name][instance_id] = {}
 							for target in range(args.target-1):
 								no_process[function_name][instance_id][str(target+1)] = 1
+								owners[str(target+1)] = wf_id
 						instances[function_name][str(total_deployed[function_name])] = {"process": targets, "allocated": mem_alloc, "last_invoked": float(incoming_request["time"]), "owner": owners}
 						if args.assignment == "standard":
-							allocated[instances[function_name][instance_id]["owner"]["0"]] += container_alloc[function_name] / args.target
+							allocated[instances[function_name][instance_id]["owner"]["0"]] += container_alloc[function_name]
 						elif args.assignment == "exact":
 							allocated[instances[function_name][instance_id]["owner"]["0"]] += float(incoming_request["mem"])
 						stats["used_total"] += float(incoming_request["mem"])
@@ -330,9 +336,7 @@ def main():
 											if args.assignment == "exact":
 												k_events["container"]["modify"][instances[function_name][instance_id]["owner"][target]] += 1
 											if instances[function_name][instance_id]["owner"][target] in allocated:
-												if args.assignment == "standard":
-													allocated[instances[function_name][instance_id]["owner"][target]] -= container_alloc[function_name] / args.target
-												elif args.assignment == "exact":
+												if args.assignment == "exact":
 													allocated[instances[function_name][instance_id]["owner"][target]] -= mem_process
 													instances[function_name][instance_id]["allocated"] -= mem_process
 													stats["alloc_total"] -= mem_process
@@ -345,6 +349,9 @@ def main():
 												no_process[function_name][instance_id] = {}
 											no_process[function_name][instance_id][target] = 1
 										if instances[function_name][instance_id]["last_invoked"] + args.ttl < stats["time"] and instance_id in no_process[function_name] and len(no_process[function_name][instance_id]) == args.target: # ttl reclaim
+											if args.assignment == "standard":
+												for t, owner in instances[function_name][instance_id]["owner"].items():
+													allocated[owner] -= container_alloc[function_name] / args.target
 											k_events["container"]["delete"][instances[function_name][instance_id]["owner"][target]] += 1
 											mem_allocated = instances[function_name][instance_id]["allocated"]
 											stats["idle_total"] -= mem_allocated
