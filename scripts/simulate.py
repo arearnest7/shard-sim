@@ -92,14 +92,13 @@ def main():
 											stats["used_" + instances[workflow_id]["shards"][shard_id]["owner"]] -= mem_shard
 											stats["alloc_total"] -= mem_shard
 											stats["alloc_" + instances[workflow_id]["shards"][shard_id]["owner"]] -= mem_shard
+											instances[workflow_id]["shards"][shard_id]["process"] = None
+											no_process[workflow_id][shard_id] = 1
 											if len(no_process[workflow_id]) == len(instances[workflow_id]["shards"]): # final function executed, shutting down (we know what the last function is beforehand)
 												to_delete = True
-											else:
-												instances[workflow_id]["shards"][shard_id]["process"] = None
-												no_process[workflow_id][shard_id] = 1
 										if to_delete:
 											k_events["container"]["delete"][workflow_id] += 1
-											no_process[workflow_id]
+											del no_process[workflow_id]
 											del instances[workflow_id]
 						else:
 							for function_name, instance_ids in next_event[str(stats["time"])].items():
@@ -314,13 +313,13 @@ def main():
 										stats["used_" + instances[workflow_id]["shards"][shard_id]["owner"]] -= mem_shard
 										stats["alloc_total"] -= mem_shard
 										stats["alloc_" + instances[workflow_id]["shards"][shard_id]["owner"]] -= mem_shard
+										instances[workflow_id]["shards"][shard_id]["process"] = None
+										no_process[workflow_id][shard_id] = 1
 										if len(no_process[workflow_id]) == len(instances[workflow_id]["shards"]): # final function executed, shutting down (we know what the last function is beforehand)
 											to_delete = True
-										else:
-											instances[workflow_id]["shards"][shard_id]["process"] = None
-											no_process[workflow_id][shard_id] = 1
 									if to_delete:
 										k_events["container"]["delete"][workflow_id] += 1
+										del no_process[workflow_id]
 										del instances[workflow_id]
 					else:
 						for function_name, instance_ids in next_event[str(stats["time"])].items():
