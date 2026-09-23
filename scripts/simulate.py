@@ -395,7 +395,7 @@ def main():
 			row = {
 				"container_create": k_events["container"]["create"][str(i)],
 				"container_delete": k_events["container"]["delete"][str(i)],
-				"container_modify": k_events["container"]["delete"][str(i)],
+				"container_modify": k_events["container"]["modify"][str(i)],
 				"cgroup_create": k_events["cgroup"]["create"][str(i)],
 				"cgroup_delete": k_events["cgroup"]["delete"][str(i)],
 				"cgroup_modify": k_events["cgroup"]["modify"][str(i)]
