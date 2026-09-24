@@ -1,16 +1,21 @@
 import numpy as np
 import csv
 from pathlib import Path
+import argparse
 
 headers_out = ["time", "request", "latency", "mem"]
-total_time = 1800000
-wf_time_start_max = 1780000
+parser = argparse.ArgumentParser(prog="python3 generate-trace.py")
+parser.add_argument("--folder_in", default="../trace/requests")
+parser.add_argument("--folder_out", default="../trace")
+parser.add_argument("--wf_start_max", default=1300000, type=int)
+parser.add_argument("--wf_jobs", default=100, type=int)
 
 def main():
+	args = parser.parse_args()
 	trace = {}
-	for i in range(10000):
-		wf_start = wf_time_start_max * np.random.rand()
-		with open(f'../trace/requests/epigenomics-{i}.csv', "r") as f:
+	for i in range(args.wf_jobs):
+		wf_start = args.wf_start_max * np.random.rand()
+		with open(f'{args.folder_in}/epigenomics-{i}.csv', "r") as f:
 			requests_f = csv.DictReader(f)
 			requests = []
 			for request in requests_f:
@@ -105,7 +110,7 @@ def main():
 	for time in trace.keys():
 		times.append(float(time))
 	times.sort()
-	with open(f'../trace/trace.csv', "w") as f:
+	with open(f'{args.folder_out}/trace.csv', "w") as f:
 		writer = csv.DictWriter(f, fieldnames=headers_out)
 		writer.writeheader()
 		requests = []

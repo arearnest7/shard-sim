@@ -3,35 +3,29 @@ import csv
 from pathlib import Path
 import math
 import argparse
-import datetime
 
 parser = argparse.ArgumentParser(prog="python3 simulate.py")
-parser.add_argument("--folder", default="../simulation")
-parser.add_argument("--scheduler", default="baseline")
+parser.add_argument("--folder_in", default="../trace")
+parser.add_argument("--folder_out", default="../simulation")
+parser.add_argument("--scheduler", default="knative")
 parser.add_argument("--ttl", default=180000, type=int) # measured in ms
 parser.add_argument("--target", default=20, type=int)
 parser.add_argument("--assignment", default="standard")
-#parser.add_argument("--k_container_create", default=1000, type=int) # measured in ms
-#parser.add_argument("--k_container_delete", default=1000, type=int) # measured in ms
-#parser.add_argument("--k_container_modify", default=1000, type=int) # measured in ms
-#parser.add_argument("--k_cgroup_create", default=1, type=int) # measured in ms
-#parser.add_argument("--k_cgroup_delete", default=500, type=int) # measured in ms
-#parser.add_argument("--k_cgroup_modify", default=1, type=int) # measured in ms
+parser.add_argument("--total_time", default=2000000, type=int) # ms
+parser.add_argument("--wf_jobs", default=100, type=int)
 
 mu_sigma = {
-	"entry": {"mu": 1.0, "sigma": 0.0},
-	"fastqSplit": {"mu": 100.0, "sigma": 10.0},
-	"filterContams": {"mu": 65.0, "sigma": 8.0},
-	"sol2sanger": {"mu": 45.0, "sigma": 8.0},
-	"fast2bfq": {"mu": 80.0, "sigma": 7.0},
-	"map": {"mu": 185.0, "sigma": 5.0},
-	"mapMerge1": {"mu": 120.0, "sigma": 10.0},
-	"mapMerge2": {"mu": 120.0, "sigma": 10.0},
-	"chr21": {"mu": 55.0, "sigma": 7.0},
-	"pileup": {"mu": 95.0, "sigma": 12.0}
+	"entry": {"mu": 1, "sigma": 0},
+	"fastqSplit": {"mu": 2.8, "sigma": 0},
+	"filterContams": {"mu": 2.97, "sigma": 0.06},
+	"sol2sanger": {"mu": 3.79, "sigma": 0},
+	"fast2bfq": {"mu": 4.05, "sigma": 0.01},
+	"map": {"mu": 196.04, "sigma": 5.5},
+	"mapMerge1": {"mu": 5, "sigma": 0.39},
+	"mapMerge2": {"mu": 5, "sigma": 0.39},
+	"chr21": {"mu": 6.17, "sigma": 0},
+	"pileup": {"mu": 148.26, "sigma": 0}
 }
-
-total_time = 2000000 # ms
 
 instances = {}
 # workflow_id: {allocated_total: mem, shards: {shard_id: {in_process: request, allocated: mem, last_invoked: time, owner: function_name}}}
@@ -48,7 +42,7 @@ no_process = {}
 total_deployed = {}
 allocated = {} # key: workflow_id, value: float
 memory_cost = {} # in units of MB*ms
-k_events = {"container": {"create": {}, "delete": {}, "modify": {}}, "cgroup": {"create": {}, "delete": {}, "modify": {}}}
+modification_events = {"container": {"create": {}, "delete": {}, "modify": {}}, "cgroup": {"create": {}, "delete": {}, "modify": {}}}
 
 stats = {"time": 0, "alloc_total": 0, "used_total": 0, "idle_total": 0}
 peak = {"alloc_total": 0, "used_total": 0, "idle_total": 0}
@@ -57,7 +51,7 @@ container_alloc = {}
 def main():
 	args = parser.parse_args()
 	for function, stat_line in mu_sigma.items():
-		if args.scheduler == "baseline":
+		if args.scheduler == "knative":
 			instances[function] = {}
 			no_process[function] = {}
 		stats["alloc_" + function] = 0
@@ -66,20 +60,20 @@ def main():
 		peak["alloc_" + function] = 0
 		peak["used_" + function] = 0
 		peak["idle_" + function] = 0
-		if args.scheduler == "baseline":
+		if args.scheduler == "knative":
 			total_deployed[function] = 0
 			container_alloc[function] = (stat_line["mu"] + 3 * stat_line["sigma"]) * args.target
-	Path(args.folder).mkdir(parents=True, exist_ok=True)
-	with open(f'../trace/trace.csv', "r") as t:
+	Path(args.folder_out).mkdir(parents=True, exist_ok=True)
+	with open(f'{args.folder_in}/trace.csv', "r") as t:
 		requests = csv.DictReader(t)
-		sim_file = f'{args.folder}/{args.scheduler}-{args.assignment}-ttl_{args.ttl}-target_{args.target}-timeline.csv'
+		sim_file = f'{args.folder_out}/{args.scheduler}-{args.assignment}-ttl_{args.ttl}-target_{args.target}-timeline.csv'
 		with open(sim_file, "w") as f:
 			writer = csv.DictWriter(f, fieldnames=stats.keys())
 			writer.writeheader()
 			for incoming_request in requests:
 				while stats["time"] < math.floor(float(incoming_request["time"])):
 					if str(stats["time"]) in next_event:
-						if args.scheduler == "arbiter":
+						if args.scheduler == "shard":
 							for workflow_id, shard_ids in next_event[str(stats["time"])].items():
 								for shard_id in shard_ids:
 									if instances[workflow_id]["shards"][shard_id]["process"] != None:
@@ -97,7 +91,7 @@ def main():
 											if len(no_process[workflow_id]) == len(instances[workflow_id]["shards"]): # final function executed, shutting down (we know what the last function is beforehand)
 												to_delete = True
 										if to_delete:
-											k_events["container"]["delete"][workflow_id] += 1
+											modification_events["container"]["delete"][workflow_id] += 1
 											del no_process[workflow_id]
 											del instances[workflow_id]
 						else:
@@ -112,7 +106,7 @@ def main():
 												stats["idle_total"] += mem_process
 												stats["idle_" + function_name] += mem_process
 												if args.assignment == "exact":
-													k_events["container"]["modify"][instances[function_name][instance_id]["owner"][target]] += 1
+													modification_events["container"]["modify"][instances[function_name][instance_id]["owner"][target]] += 1
 												if instances[function_name][instance_id]["owner"][target] in allocated:
 													if args.assignment == "exact":
 														allocated[instances[function_name][instance_id]["owner"][target]] -= mem_process
@@ -130,7 +124,7 @@ def main():
 												if args.assignment == "standard":
 													for t, owner in instances[function_name][instance_id]["owner"].items():
 														allocated[owner] -= container_alloc[function_name] / args.target
-												k_events["container"]["delete"][instances[function_name][instance_id]["owner"][target]] += 1
+												modification_events["container"]["delete"][instances[function_name][instance_id]["owner"][target]] += 1
 												mem_allocated = instances[function_name][instance_id]["allocated"]
 												stats["idle_total"] -= mem_allocated
 												stats["idle_" + function_name] -= mem_allocated
@@ -142,7 +136,7 @@ def main():
 					for stat_name, stat in stats.items(): # update the peak
 						if stat_name != "time" and peak[stat_name] < stat:
 							peak[stat_name] = stat
-					if args.scheduler == "arbiter":
+					if args.scheduler == "shard":
 						for workflow_id, instance in instances.items(): # has not been reclaimed and needs to be "billed"
 							memory_cost[workflow_id] += instance["allocated_total"]
 						writer.writerow(stats) # write simulation timeline
@@ -160,14 +154,14 @@ def main():
 					if stats["time"] % 1000 == 0:
 						print("simulation time (ms): " + str(stats["time"]))
 				wf_id = incoming_request["request"].split("_")[1]
-				if wf_id not in k_events["container"]["create"]:
+				if wf_id not in modification_events["container"]["create"]:
 					for c in ["container", "cgroup"]:
 						for m in ["create", "delete", "modify"]:
-							k_events[c][m][wf_id] = 0
+							modification_events[c][m][wf_id] = 0
 				function_name = incoming_request["request"].split("_")[2]
-				if args.scheduler == "arbiter":
+				if args.scheduler == "shard":
 					if wf_id not in instances:
-						k_events["container"]["create"][wf_id] += 1
+						modification_events["container"]["create"][wf_id] += 1
 						instances[wf_id] = {"allocated_total": 0, "shards": {}}
 						memory_cost[wf_id] = 0
 						no_process[wf_id] = {}
@@ -178,7 +172,7 @@ def main():
 						instances[wf_id]["shards"][shard_id]["last_invoked"] = float(incoming_request["time"])
 						instances[wf_id]["shards"][shard_id]["owner"] = function_name
 						instances[wf_id]["shards"][shard_id]["allocated"] = float(incoming_request["mem"])
-						k_events["cgroup"]["modify"][wf_id] += 2 # counting external and shard
+						modification_events["cgroup"]["modify"][wf_id] += 2 # counting external and shard
 						instances[wf_id]["allocated_total"] += instances[wf_id]["shards"][shard_id]["allocated"]
 						stats["used_total"] += float(incoming_request["mem"])
 						stats["used_" + function_name] += float(incoming_request["mem"])
@@ -191,7 +185,7 @@ def main():
 							next_event[next_finish][wf_id] = {}
 						next_event[next_finish][wf_id][shard_id] = 1
 					else: # create new shard for incoming request
-						k_events["cgroup"]["create"][wf_id] += 1
+						modification_events["cgroup"]["create"][wf_id] += 1
 						shard_id = len(instances[wf_id]["shards"])
 						instances[wf_id]["shards"][shard_id] = {"process": incoming_request, "allocated": float(incoming_request["mem"]), "last_invoked": float(incoming_request["time"]), "owner": function_name}
 						instances[wf_id]["allocated_total"] += instances[wf_id]["shards"][shard_id]["allocated"]
@@ -228,7 +222,7 @@ def main():
 							instances[function_name][instance_id]["allocated"] += float(incoming_request["mem"])
 							stats["alloc_total"] += float(incoming_request["mem"])
 							stats["alloc_" + function_name] += float(incoming_request["mem"])
-							k_events["container"]["modify"][wf_id] += 1
+							modification_events["container"]["modify"][wf_id] += 1
 						stats["used_total"] += float(incoming_request["mem"])
 						stats["used_" + function_name] += float(incoming_request["mem"])
 						next_finish = int(math.ceil(float(instances[function_name][instance_id]["process"][target]["time"]) + float(instances[function_name][instance_id]["process"][target]["latency"])))
@@ -253,7 +247,7 @@ def main():
 						if len(no_process[function_name][instance_id]) == 0:
 							del no_process[function_name][instance_id]
 					else: # create new instance for incoming request
-						k_events["container"]["create"][wf_id] += 1
+						modification_events["container"]["create"][wf_id] += 1
 						mem_alloc = container_alloc[function_name]
 						instance_id = str(total_deployed[function_name])
 						if args.assignment == "exact":
@@ -298,9 +292,9 @@ def main():
 				for stat_name, stat in stats.items(): # update the peak
 					if stat_name != "time" and peak[stat_name] < stat:
 						peak[stat_name] = stat
-			while stats["time"] < total_time: # drain final requests
+			while stats["time"] < args.total_time: # drain final requests
 				if str(stats["time"]) in next_event:
-					if args.scheduler == "arbiter":
+					if args.scheduler == "shard":
 						for workflow_id, shard_ids in next_event[str(stats["time"])].items():
 							for shard_id in shard_ids:
 								if instances[workflow_id]["shards"][shard_id]["process"] != None:
@@ -318,7 +312,7 @@ def main():
 										if len(no_process[workflow_id]) == len(instances[workflow_id]["shards"]): # final function executed, shutting down (we know what the last function is beforehand)
 											to_delete = True
 									if to_delete:
-										k_events["container"]["delete"][workflow_id] += 1
+										modification_events["container"]["delete"][workflow_id] += 1
 										del no_process[workflow_id]
 										del instances[workflow_id]
 					else:
@@ -333,7 +327,7 @@ def main():
 											stats["idle_total"] += mem_process
 											stats["idle_" + function_name] += mem_process
 											if args.assignment == "exact":
-												k_events["container"]["modify"][instances[function_name][instance_id]["owner"][target]] += 1
+												modification_events["container"]["modify"][instances[function_name][instance_id]["owner"][target]] += 1
 											if instances[function_name][instance_id]["owner"][target] in allocated:
 												if args.assignment == "exact":
 													allocated[instances[function_name][instance_id]["owner"][target]] -= mem_process
@@ -351,7 +345,7 @@ def main():
 											if args.assignment == "standard":
 												for t, owner in instances[function_name][instance_id]["owner"].items():
 													allocated[owner] -= container_alloc[function_name] / args.target
-											k_events["container"]["delete"][instances[function_name][instance_id]["owner"][target]] += 1
+											modification_events["container"]["delete"][instances[function_name][instance_id]["owner"][target]] += 1
 											mem_allocated = instances[function_name][instance_id]["allocated"]
 											stats["idle_total"] -= mem_allocated
 											stats["idle_" + function_name] -= mem_allocated
@@ -363,7 +357,7 @@ def main():
 				for stat_name, stat in stats.items(): # update the peak
 					if stat_name != "time" and peak[stat_name] < stat:
 						peak[stat_name] = stat
-				if args.scheduler == "arbiter":
+				if args.scheduler == "shard":
 					for workflow_id, instance in instances.items(): # has not been reclaimed and needs to be "billed"
 						memory_cost[workflow_id] += instance["allocated_total"]
 					writer.writerow(stats) # write simulation timeline
@@ -380,25 +374,25 @@ def main():
 				stats["time"] += 1
 				if stats["time"] % 1000 == 0:
 					print("simulation time (ms): " + str(stats["time"]))
-	with open(f'{args.folder}/{args.scheduler}-{args.assignment}-ttl_{args.ttl}-target_{args.target}-peak.csv', "w") as f:
+	with open(f'{args.folder_out}/{args.scheduler}-{args.assignment}-ttl_{args.ttl}-target_{args.target}-peak.csv', "w") as f:
 		writer = csv.DictWriter(f, fieldnames=peak.keys())
 		writer.writeheader()
 		writer.writerow(peak)
-	with open(f'{args.folder}/{args.scheduler}-{args.assignment}-ttl_{args.ttl}-target_{args.target}-cost.csv', "w") as f:
+	with open(f'{args.folder_out}/{args.scheduler}-{args.assignment}-ttl_{args.ttl}-target_{args.target}-cost.csv', "w") as f:
 		writer = csv.DictWriter(f, fieldnames=memory_cost.keys())
 		writer.writeheader()
 		writer.writerow(memory_cost)
-	with open(f'{args.folder}/{args.scheduler}-{args.assignment}-ttl_{args.ttl}-target_{args.target}-k.csv', "w") as f:
+	with open(f'{args.folder_out}/{args.scheduler}-{args.assignment}-ttl_{args.ttl}-target_{args.target}-modifications.csv', "w") as f:
 		writer = csv.DictWriter(f, fieldnames=["container_create", "container_delete", "container_modify", "cgroup_create", "cgroup_delete", "cgroup_modify"])
 		writer.writeheader()
-		for i in range(10000):
+		for i in range(args.wf_jobs):
 			row = {
-				"container_create": k_events["container"]["create"][str(i)],
-				"container_delete": k_events["container"]["delete"][str(i)],
-				"container_modify": k_events["container"]["modify"][str(i)],
-				"cgroup_create": k_events["cgroup"]["create"][str(i)],
-				"cgroup_delete": k_events["cgroup"]["delete"][str(i)],
-				"cgroup_modify": k_events["cgroup"]["modify"][str(i)]
+				"container_create": modification_events["container"]["create"][str(i)],
+				"container_delete": modification_events["container"]["delete"][str(i)],
+				"container_modify": modification_events["container"]["modify"][str(i)],
+				"cgroup_create": modification_events["cgroup"]["create"][str(i)],
+				"cgroup_delete": modification_events["cgroup"]["delete"][str(i)],
+				"cgroup_modify": modification_events["cgroup"]["modify"][str(i)]
 			}
 			writer.writerow(row)
 
